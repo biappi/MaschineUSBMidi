@@ -11,6 +11,8 @@
 #include <unistd.h>
 #include <libusb/libusb.h>
 
+#include "controls-map.h"
+
 const uint16_t USB_VID_NATIVEINSTRUMENTS  = 0x17cc;
 const uint16_t USB_PID_MASCHINECONTROLLER = 0x0808;
 
@@ -109,57 +111,6 @@ static unsigned int decode_erp(uint8_t a, uint8_t b)
     return ret;
 }
 
-static const char * keycode_maschine[] = {
-    "mute",
-    "solo",
-    "select",
-    "duplicate",
-    "navigate",
-    "pad",
-    "pattern",
-    "scene",
-    
-    "KEY_RESERVED",
-
-    "rec",
-    "erase",
-    "shift",
-    "grid",
-    ">",
-    "<",
-    "restart",
-
-    "E",
-    "F",
-    "G",
-    "H",
-    "D",
-    "C",
-    "B",
-    "A",
-
-    "control",
-    "browse",
-    "<",
-    "snap",
-    "autowrite",
-    ">",
-    "sampling",
-    "step",
-
-    "soft1",
-    "soft2",
-    "soft3",
-    "soft4",
-    "soft5",
-    "soft6",
-    "soft7",
-    "soft8",
-
-    "note repeat",
-    "play",
-};
-
 static void ep1_command_responses_callback(struct libusb_transfer * transfer) {
     
     enum EP1_COMMANDS cmd = transfer->buffer[0];
@@ -213,13 +164,13 @@ static void ep1_command_responses_callback(struct libusb_transfer * transfer) {
             uint8_t *buf = transfer->buffer + 1;
             size_t   len = transfer->actual_length - 1;
             
-            int button_count = sizeof(keycode_maschine) / sizeof(char *);
+            int button_count = sizeof(MaschineKeycodeNames) / sizeof(char *);
             
             for (int i = 0; (i < len * 8) & (i < button_count); i++) {
                 int bang = buf[i / 8] & (1 << (i % 8));
                 
                 if (bang) {
-                    printf(" %3d pressed %s\n", i, keycode_maschine[i]);
+                    printf(" %3d pressed %s\n", i, MaschineKeycodeNames[i]);
                 }
             }
             break;
@@ -289,23 +240,53 @@ static void send_command_set_auto_message(
     send_command(maschine, command, sizeof(command));
 }
 
+
+const int MASCHINE_LED_MAX_VAL   = 63;
+const int MASCHINE_LED_BANK_SIZE = 32;
+const int MASCHINE_LED_CMD_SIZE  = MASCHINE_LED_BANK_SIZE + 2;
+const int MASCHINE_LED_BANK0     = MASCHINE_LED_CMD_SIZE * 0;
+const int MASCHINE_LED_BANK1     = MASCHINE_LED_CMD_SIZE * 1;
+
+typedef uint8_t MaschineLedState[MASCHINE_LED_CMD_SIZE * 2];
+
+void MaschineLedState_Init(MaschineLedState state) {
+    state[MASCHINE_LED_BANK0 + 0] = EP1_CMD_DIMM_LEDS;
+    state[MASCHINE_LED_BANK0 + 1] = 0x00;
+    
+    state[MASCHINE_LED_BANK1 + 0] = EP1_CMD_DIMM_LEDS;
+    state[MASCHINE_LED_BANK1 + 1] = 0x1e;
+}
+
+void MaschineLedState_SetLed(MaschineLedState state, enum MaschineLeds led, int on) {
+    int bank = (led < MASCHINE_LED_BANK_SIZE)
+        ? MASCHINE_LED_BANK0
+        : MASCHINE_LED_BANK1;
+    
+    state[bank + 2 + (led % MASCHINE_LED_BANK_SIZE)] = on ? MASCHINE_LED_MAX_VAL : 0;
+}
+
+static void send_led_state(
+    libusb_device_handle * maschine,
+    MaschineLedState state
+) {
+    send_command(maschine, &state[MASCHINE_LED_BANK0], MASCHINE_LED_CMD_SIZE);
+    send_command(maschine, &state[MASCHINE_LED_BANK1], MASCHINE_LED_CMD_SIZE);
+}
+
 static void send_command_dimm_leds(
    libusb_device_handle * maschine,
    int bank
 ) {
-    const int MASCHINE_BANK_SIZE = 32;
-    const int MAX_VAL = 63;
-    
-    uint8_t command[MASCHINE_BANK_SIZE + 2] = {0};
+    uint8_t command[MASCHINE_LED_BANK_SIZE + 2] = {0};
     
     command[0] = EP1_CMD_DIMM_LEDS;
     command[1] = bank ? 0x1e : 0x00;
     
     static int i = 0;
-    command[2 + i] = MAX_VAL;
+    command[2 + i] = MASCHINE_LED_MAX_VAL;
     
     if (bank)
-        i = (i + 1) % MASCHINE_BANK_SIZE;
+        i = (i + 1) % MASCHINE_LED_BANK_SIZE;
     
     send_command(maschine, command, sizeof(command));
 }
@@ -389,9 +370,25 @@ int main(void)
     send_command_get_device_info(maschine);
     send_command_set_auto_message(maschine, 1, 10, 5);
 
+    MaschineLedState led_state;
+    MaschineLedState_Init(led_state);
+    
+    MaschineLedState_SetLed(led_state, MaschineLed_BacklightDisplay, 1);
+    
+    const int num_pads = 16;
+    int show_pads = 0;
+    
     while (1) {
-        send_command_dimm_leds(maschine, 0);
-        send_command_dimm_leds(maschine, 1);
+        int onoff = !(show_pads / num_pads);
+        int pad   =   show_pads % num_pads;
+        
+        MaschineLedState_SetLed(led_state, MaschineLed_Pad_1 + pad, onoff);
+        send_led_state(maschine, led_state);
+                
+        show_pads++;
+        
+        if (show_pads > (num_pads * 2))
+            show_pads = 0;
         
         struct timeval x = {
             .tv_sec = 0,

@@ -84,6 +84,7 @@
 
 /* Begin PBXFileReference section */
 		3F2CA8AC238AD8F20042DB4F /* libusb.xcodeproj */ = {isa = PBXFileReference; lastKnownFileType = "wrapper.pb-project"; name = libusb.xcodeproj; path = libusb/Xcode/libusb.xcodeproj; sourceTree = "<group>"; };
+		3FEA97B823940D9E00CA701B /* controls-map.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "controls-map.h"; sourceTree = "<group>"; };
 		3FEC3A03238AD8AA009CBA06 /* maschine-userland-test */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = "maschine-userland-test"; sourceTree = BUILT_PRODUCTS_DIR; };
 		3FEC3A06238AD8AA009CBA06 /* main.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = main.c; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -144,6 +145,7 @@
 			isa = PBXGroup;
 			children = (
 				3FEC3A06238AD8AA009CBA06 /* main.c */,
+				3FEA97B823940D9E00CA701B /* controls-map.h */,
 			);
 			path = "maschine-userland-test";
 			sourceTree = "<group>";
