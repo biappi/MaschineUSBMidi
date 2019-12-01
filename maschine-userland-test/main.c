@@ -9,6 +9,8 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <unistd.h>
+#include <string.h>
+
 #include <libusb/libusb.h>
 
 #include "controls-map.h"
@@ -341,6 +343,157 @@ void receive_ep4_pad_pressure_report(libusb_device_handle *maschine) {
         printf("cannot submit transfer 3 %d\n", r);
 }
 
+const int display_width     = 255;
+const int display_height    =  64;
+
+const int display_row_size  = display_width * 2 / 3;
+const int display_data_size = display_row_size * display_height;
+
+typedef uint8_t MaschineDisplayData[display_data_size];
+
+enum MaschineDisplay {
+    MaschineDisplay_Left  = 0 << 1,
+    MaschineDisplay_Right = 1 << 1,
+};
+
+static void millisecond_sleep(int milli) {
+    struct timeval x = {
+        .tv_sec = 0,
+        .tv_usec = milli * 1000,
+    };
+    
+    libusb_handle_events_timeout(NULL, &x);
+}
+
+static void display_init(libusb_device_handle *maschine, enum MaschineDisplay display) {
+    uint8_t d = display;
+
+    uint8_t init1[]  = {d, 0x00, 0x01, 0x30};
+    uint8_t init2[]  = {d, 0x00, 0x04, 0xCA, 0x04, 0x0F, 0x00};
+
+    uint8_t init3[]  = {d, 0x00, 0x02, 0xBB, 0x00};
+    uint8_t init4[]  = {d, 0x00, 0x01, 0xD1};
+    uint8_t init5[]  = {d, 0x00, 0x01, 0x94};
+    uint8_t init6[]  = {d, 0x00, 0x03, 0x81, 0x1E, 0x02};
+
+    uint8_t init7[]  = {d, 0x00, 0x02, 0x20, 0x08};
+
+    uint8_t init8[]  = {d, 0x00, 0x02, 0x20, 0x0B};
+
+    uint8_t init9[]  = {d, 0x00, 0x01, 0xA6};
+    uint8_t init10[] = {d, 0x00, 0x01, 0x31};
+    uint8_t init11[] = {d, 0x00, 0x04, 0x32, 0x00, 0x00, 0x05};
+    uint8_t init12[] = {d, 0x00, 0x01, 0x34};
+    uint8_t init13[] = {d, 0x00, 0x01, 0x30};
+    uint8_t init14[] = {d, 0x00, 0x04, 0xBC, 0x00, 0x01, 0x02};
+    uint8_t init15[] = {d, 0x00, 0x03, 0x75, 0x00, 0x3F};
+    uint8_t init16[] = {d, 0x00, 0x03, 0x15, 0x00, 0x54};
+    uint8_t init17[] = {d, 0x00, 0x01, 0x5C};
+    uint8_t init18[] = {d, 0x00, 0x01, 0x25};
+
+    uint8_t init19[] = {d, 0x00, 0x01, 0xAF};
+
+    uint8_t init20[] = {d, 0x00, 0x04, 0xBC, 0x02, 0x01, 0x01};
+    uint8_t init21[] = {d, 0x00, 0x01, 0xA6};
+    uint8_t init22[] = {d, 0x00, 0x03, 0x81, 0x25, 0x02};
+
+    libusb_bulk_transfer(maschine, 0x08, init1,  sizeof(init1),  NULL, 200);
+    libusb_bulk_transfer(maschine, 0x08, init2,  sizeof(init2),  NULL, 200);
+    millisecond_sleep(20);
+    
+    libusb_bulk_transfer(maschine, 0x08, init3,  sizeof(init3),  NULL, 200);
+    libusb_bulk_transfer(maschine, 0x08, init4,  sizeof(init4),  NULL, 200);
+    libusb_bulk_transfer(maschine, 0x08, init5,  sizeof(init5),  NULL, 200);
+    libusb_bulk_transfer(maschine, 0x08, init6,  sizeof(init6),  NULL, 200);
+    millisecond_sleep(20);
+    
+    libusb_bulk_transfer(maschine, 0x08, init7,  sizeof(init7),  NULL, 200);
+    millisecond_sleep(20);
+    
+    libusb_bulk_transfer(maschine, 0x08, init8,  sizeof(init8),  NULL, 200);
+    millisecond_sleep(20);
+    
+    libusb_bulk_transfer(maschine, 0x08, init9,  sizeof(init9),  NULL, 200);
+    libusb_bulk_transfer(maschine, 0x08, init10, sizeof(init10), NULL, 200);
+    libusb_bulk_transfer(maschine, 0x08, init11, sizeof(init11), NULL, 200);
+    libusb_bulk_transfer(maschine, 0x08, init12, sizeof(init12), NULL, 200);
+    libusb_bulk_transfer(maschine, 0x08, init13, sizeof(init13), NULL, 200);
+    libusb_bulk_transfer(maschine, 0x08, init14, sizeof(init14), NULL, 200);
+    libusb_bulk_transfer(maschine, 0x08, init15, sizeof(init15), NULL, 200);
+    libusb_bulk_transfer(maschine, 0x08, init16, sizeof(init16), NULL, 200);
+    libusb_bulk_transfer(maschine, 0x08, init17, sizeof(init17), NULL, 200);
+    libusb_bulk_transfer(maschine, 0x08, init18, sizeof(init18), NULL, 200);
+    millisecond_sleep(20);
+    
+    libusb_bulk_transfer(maschine, 0x08, init19, sizeof(init19), NULL, 200);
+    millisecond_sleep(20);
+    
+    libusb_bulk_transfer(maschine, 0x08, init20, sizeof(init20), NULL, 200);
+    libusb_bulk_transfer(maschine, 0x08, init21, sizeof(init21), NULL, 200);
+    libusb_bulk_transfer(maschine, 0x08, init22, sizeof(init22), NULL, 200);
+}
+
+static void display_send_frame(libusb_device_handle *maschine, MaschineDisplayData data, enum MaschineDisplay display) {
+    const int num_chunks     = 22;
+    const int data_size      = 502;
+    const int last_data_size = 338;
+    
+    uint8_t d = display;
+    
+    uint8_t buffer1[]         = { d,     0x00, 0x03, 0x75, 0x00, 0x3f };
+    uint8_t buffer2[]         = { d,     0x00, 0x03, 0x15, 0x00, 0x54 };
+    uint8_t first_chunk_hdr[] = { d,     0x01, 0xf7, 0x5c };
+    uint8_t mid_chunks_hdr[]  = { d + 1, 0x01, 0xf6 };
+    uint8_t last_chunk_hdr[]  = { d + 1, 0x01, 0x52 };
+    
+    uint8_t first_chunk [data_size + sizeof(first_chunk_hdr)] = { 0 };
+    uint8_t mid_chunk   [data_size + sizeof(mid_chunks_hdr) ] = { 0 };
+    uint8_t last_chunk  [data_size + sizeof(last_chunk_hdr) ] = { 0 };
+    
+    memcpy(first_chunk, first_chunk_hdr, sizeof(first_chunk_hdr));
+    memcpy(mid_chunk,   mid_chunks_hdr,  sizeof(mid_chunks_hdr));
+    memcpy(last_chunk,  last_chunk_hdr,  sizeof(last_chunk_hdr));
+    
+    libusb_bulk_transfer(maschine, 0x08, buffer1, sizeof(buffer1), NULL, 200);
+    libusb_bulk_transfer(maschine, 0x08, buffer2, sizeof(buffer2), NULL, 200);
+
+    memcpy(first_chunk + sizeof(first_chunk_hdr), data, data_size);
+    libusb_bulk_transfer(maschine, 0x08, first_chunk, sizeof(first_chunk), NULL, 200);
+    
+    for (int c = 1; c < (num_chunks - 1); c++) {
+        memcpy(mid_chunk + sizeof(mid_chunks_hdr), data + (c * data_size), data_size);
+        libusb_bulk_transfer(maschine, 0x08, mid_chunk, sizeof(mid_chunk), NULL, 200);
+    }
+    
+    memcpy(last_chunk + sizeof(last_chunk_hdr), data + ((num_chunks - 1) * data_size), last_data_size);
+    
+    libusb_bulk_transfer(maschine, 0x08, last_chunk, sizeof(last_chunk), NULL, 200);
+}
+
+static void display_data_test(MaschineDisplayData display_data) {
+    // 0x  f8        1f
+    //     1111 1000 0001 1111
+    // 0x  07        c0
+    //     0000 0111 1100 0000
+    
+    int xx = 0;
+    
+    for (int i = 0; i < display_data_size; i++) {
+        if ((i % display_row_size) == 0) {
+            xx = 0x00;
+        }
+        
+        if ((i % 2) == 0) {
+            display_data[i] = (xx << 3) | (xx >> 2);
+        }
+        else {
+            display_data[i] = (xx << 6) | (xx);
+        }
+        
+        xx = (xx + 1) & 0x1f;
+    }
+}
+
 int main(void)
 {
     int r;
@@ -372,11 +525,19 @@ int main(void)
 
     MaschineLedState led_state;
     MaschineLedState_Init(led_state);
-    
     MaschineLedState_SetLed(led_state, MaschineLed_BacklightDisplay, 1);
     
     const int num_pads = 16;
     int show_pads = 0;
+    
+    MaschineDisplayData display_data;
+    display_data_test(display_data);
+    
+    display_init(maschine, MaschineDisplay_Left);
+    display_init(maschine, MaschineDisplay_Right);
+    
+    display_send_frame(maschine, display_data, MaschineDisplay_Left);
+    display_send_frame(maschine, display_data, MaschineDisplay_Right);
     
     while (1) {
         int onoff = !(show_pads / num_pads);
@@ -390,12 +551,7 @@ int main(void)
         if (show_pads > (num_pads * 2))
             show_pads = 0;
         
-        struct timeval x = {
-            .tv_sec = 0,
-            .tv_usec = 80000,
-        };
-        
-        libusb_handle_events_timeout(NULL, &x);
+        millisecond_sleep(80);
     }
     
     return 0;
