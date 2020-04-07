@@ -297,6 +297,7 @@ static void send_led_state(
     send_command(maschine, &state[MASCHINE_LED_BANK1], MASCHINE_LED_CMD_SIZE);
 }
 
+/*
 static void send_command_dimm_leds(
    libusb_device_handle * maschine,
    int bank
@@ -314,6 +315,7 @@ static void send_command_dimm_leds(
     
     send_command(maschine, command, sizeof(command));
 }
+*/
 
 void receive_ep1_command_responses(libusb_device_handle *maschine) {
     static const size_t length = 64;
