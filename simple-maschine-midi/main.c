@@ -1,6 +1,6 @@
 //
 //  main.c
-//  maschine-userland-test
+//  simple-maschine-midi
 //
 //  Created by Antonio Malara on 24/11/2019.
 //  Copyright © 2019 Antonio Malara. All rights reserved.

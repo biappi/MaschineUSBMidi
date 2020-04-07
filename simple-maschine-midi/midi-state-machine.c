@@ -1,6 +1,6 @@
 //
 //  midi-state-machine.c
-//  maschine-userland-test
+//  simple-maschine-midi
 //
 //  Created by Antonio Malara on 07/04/2020.
 //  Copyright © 2020 Antonio Malara. All rights reserved.

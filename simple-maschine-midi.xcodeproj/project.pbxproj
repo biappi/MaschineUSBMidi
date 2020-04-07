@@ -90,7 +90,7 @@
 		3FDC726E243CCD3C00E0E00F /* midi-state-machine.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "midi-state-machine.h"; sourceTree = "<group>"; };
 		3FDC726F243CCD3C00E0E00F /* midi-state-machine.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = "midi-state-machine.c"; sourceTree = "<group>"; };
 		3FEA97B823940D9E00CA701B /* controls-map.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "controls-map.h"; sourceTree = "<group>"; };
-		3FEC3A03238AD8AA009CBA06 /* maschine-userland-test */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = "maschine-userland-test"; sourceTree = BUILT_PRODUCTS_DIR; };
+		3FEC3A03238AD8AA009CBA06 /* simple-maschine-midi */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = "simple-maschine-midi"; sourceTree = BUILT_PRODUCTS_DIR; };
 		3FEC3A06238AD8AA009CBA06 /* main.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = main.c; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -134,7 +134,7 @@
 			isa = PBXGroup;
 			children = (
 				3F2CA8AC238AD8F20042DB4F /* libusb.xcodeproj */,
-				3FEC3A05238AD8AA009CBA06 /* maschine-userland-test */,
+				3FEC3A05238AD8AA009CBA06 /* simple-maschine-midi */,
 				3FEC3A04238AD8AA009CBA06 /* Products */,
 				3F2CA8C8238AD9400042DB4F /* Frameworks */,
 			);
@@ -143,12 +143,12 @@
 		3FEC3A04238AD8AA009CBA06 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				3FEC3A03238AD8AA009CBA06 /* maschine-userland-test */,
+				3FEC3A03238AD8AA009CBA06 /* simple-maschine-midi */,
 			);
 			name = Products;
 			sourceTree = "<group>";
 		};
-		3FEC3A05238AD8AA009CBA06 /* maschine-userland-test */ = {
+		3FEC3A05238AD8AA009CBA06 /* simple-maschine-midi */ = {
 			isa = PBXGroup;
 			children = (
 				3FEC3A06238AD8AA009CBA06 /* main.c */,
@@ -156,15 +156,15 @@
 				3FDC726F243CCD3C00E0E00F /* midi-state-machine.c */,
 				3FEA97B823940D9E00CA701B /* controls-map.h */,
 			);
-			path = "maschine-userland-test";
+			path = "simple-maschine-midi";
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		3FEC3A02238AD8AA009CBA06 /* maschine-userland-test */ = {
+		3FEC3A02238AD8AA009CBA06 /* simple-maschine-midi */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 3FEC3A0A238AD8AA009CBA06 /* Build configuration list for PBXNativeTarget "maschine-userland-test" */;
+			buildConfigurationList = 3FEC3A0A238AD8AA009CBA06 /* Build configuration list for PBXNativeTarget "simple-maschine-midi" */;
 			buildPhases = (
 				3FEC39FF238AD8AA009CBA06 /* Sources */,
 				3FEC3A00238AD8AA009CBA06 /* Frameworks */,
@@ -174,9 +174,9 @@
 			);
 			dependencies = (
 			);
-			name = "maschine-userland-test";
+			name = "simple-maschine-midi";
 			productName = "maschine-userland-test";
-			productReference = 3FEC3A03238AD8AA009CBA06 /* maschine-userland-test */;
+			productReference = 3FEC3A03238AD8AA009CBA06 /* simple-maschine-midi */;
 			productType = "com.apple.product-type.tool";
 		};
 /* End PBXNativeTarget section */
@@ -193,7 +193,7 @@
 					};
 				};
 			};
-			buildConfigurationList = 3FEC39FE238AD8AA009CBA06 /* Build configuration list for PBXProject "maschine-userland-test" */;
+			buildConfigurationList = 3FEC39FE238AD8AA009CBA06 /* Build configuration list for PBXProject "simple-maschine-midi" */;
 			compatibilityVersion = "Xcode 9.3";
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
@@ -212,7 +212,7 @@
 			);
 			projectRoot = "";
 			targets = (
-				3FEC3A02238AD8AA009CBA06 /* maschine-userland-test */,
+				3FEC3A02238AD8AA009CBA06 /* simple-maschine-midi */,
 			);
 		};
 /* End PBXProject section */
@@ -419,7 +419,7 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		3FEC39FE238AD8AA009CBA06 /* Build configuration list for PBXProject "maschine-userland-test" */ = {
+		3FEC39FE238AD8AA009CBA06 /* Build configuration list for PBXProject "simple-maschine-midi" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				3FEC3A08238AD8AA009CBA06 /* Debug */,
@@ -428,7 +428,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		3FEC3A0A238AD8AA009CBA06 /* Build configuration list for PBXNativeTarget "maschine-userland-test" */ = {
+		3FEC3A0A238AD8AA009CBA06 /* Build configuration list for PBXNativeTarget "simple-maschine-midi" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				3FEC3A0B238AD8AA009CBA06 /* Debug */,
