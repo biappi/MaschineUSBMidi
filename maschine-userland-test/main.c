@@ -12,11 +12,20 @@
 #include <string.h>
 
 #include <libusb/libusb.h>
+#include <CoreMIDI/CoreMIDI.h>
 
+#include "midi-state-machine.h"
 #include "controls-map.h"
 
 const uint16_t USB_VID_NATIVEINSTRUMENTS  = 0x17cc;
 const uint16_t USB_PID_MASCHINECONTROLLER = 0x0808;
+
+libusb_device_handle * maschine;
+midi_parser parser;
+
+MIDIClientRef client;
+MIDIEndpointRef source;
+MIDIEndpointRef destination;
 
 enum EP1_COMMANDS {
     EP1_CMD_GET_DEVICE_INFO = 0x1,
@@ -178,6 +187,19 @@ static void ep1_command_responses_callback(struct libusb_transfer * transfer) {
             break;
         }
         
+        case EP1_CMD_MIDI_READ:
+        {
+            uint8_t * buf = transfer->buffer + 3;
+            int       len = transfer->buffer[2];
+
+            for (int i = 0; i < len; i++) {
+                midi_parser_parse(&parser, buf[i]);
+            }
+            
+            break;
+        }
+        
+        case EP1_CMD_MIDI_WRITE:
         case EP1_CMD_DIMM_LEDS:
         case EP1_CMD_AUTO_MSG:
             break;
@@ -494,21 +516,62 @@ static void display_data_test(MaschineDisplayData display_data) {
     }
 }
 
+static void InputPortCallback(
+    const MIDIPacketList * pktlist,
+    void * refCon,
+    void * connRefCon
+) {
+    uint8_t buffer[512];
+    MIDIPacket * packet = (MIDIPacket *)pktlist->packet;
+
+    for (int i = 0; i < pktlist->numPackets; i++) {
+        if (packet->length > (sizeof(buffer) - 3))
+            continue;
+        
+        buffer[0] = EP1_CMD_MIDI_WRITE;
+        buffer[1] = 0;
+        buffer[2] = packet->length;
+        memcpy(buffer + 3, packet->data, packet->length);
+        
+        libusb_bulk_transfer(maschine, 0x01, buffer, packet->length + 3, NULL, 200);
+        packet = MIDIPacketNext(packet);
+    }
+}
+
+static void midi_send(uint8_t *buf, int len) {
+    static uint8_t packetData[512];
+    
+    MIDIPacketList *packetList = (MIDIPacketList *)packetData;
+    MIDIPacket *curPacket = NULL;
+    
+    curPacket = MIDIPacketListInit(packetList);
+    curPacket = MIDIPacketListAdd(packetList, sizeof(packetData), curPacket, 0, len, buf);
+    
+    MIDIReceived(source, packetList);
+}
+
 int main(void)
 {
+    midi_parser_init(&parser, midi_send);
+    
+    MIDIClientCreate(CFSTR("Simple Maschine MIDI Driver"), NULL, NULL, &client);
+    MIDISourceCreate(client, CFSTR("Simple Maschine MIDI In"), &source);
+    MIDIDestinationCreate(client, CFSTR("Simple Maschine MIDI Out"), InputPortCallback, NULL, &destination);
+    
+    /* - */
+    
     int r;
 
     r = libusb_init(NULL);
     if (r < 0)
         printf("cannot init %d\n", r);
 
-    libusb_device_handle *
     maschine = libusb_open_device_with_vid_pid(
         NULL,
         USB_VID_NATIVEINSTRUMENTS,
         USB_PID_MASCHINECONTROLLER
     );
-        
+    
     r = libusb_claim_interface(maschine, 0);
     if (r < 0)
         printf("cannot claim if %d\n", r);
@@ -523,6 +586,8 @@ int main(void)
     send_command_get_device_info(maschine);
     send_command_set_auto_message(maschine, 1, 10, 5);
 
+    /* - */
+    
     MaschineLedState led_state;
     MaschineLedState_Init(led_state);
     MaschineLedState_SetLed(led_state, MaschineLed_BacklightDisplay, 1);

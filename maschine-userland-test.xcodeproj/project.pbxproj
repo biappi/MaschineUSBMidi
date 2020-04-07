@@ -8,6 +8,8 @@
 
 /* Begin PBXBuildFile section */
 		3F2CA8C9238AD9400042DB4F /* libusb-1.0.0.dylib in Frameworks */ = {isa = PBXBuildFile; fileRef = 3F2CA8B9238AD8F20042DB4F /* libusb-1.0.0.dylib */; };
+		3FDC726D243CC22300E0E00F /* CoreMIDI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3FDC726C243CC22300E0E00F /* CoreMIDI.framework */; };
+		3FDC7270243CCD3C00E0E00F /* midi-state-machine.c in Sources */ = {isa = PBXBuildFile; fileRef = 3FDC726F243CCD3C00E0E00F /* midi-state-machine.c */; };
 		3FEC3A07238AD8AA009CBA06 /* main.c in Sources */ = {isa = PBXBuildFile; fileRef = 3FEC3A06238AD8AA009CBA06 /* main.c */; };
 /* End PBXBuildFile section */
 
@@ -84,6 +86,9 @@
 
 /* Begin PBXFileReference section */
 		3F2CA8AC238AD8F20042DB4F /* libusb.xcodeproj */ = {isa = PBXFileReference; lastKnownFileType = "wrapper.pb-project"; name = libusb.xcodeproj; path = libusb/Xcode/libusb.xcodeproj; sourceTree = "<group>"; };
+		3FDC726C243CC22300E0E00F /* CoreMIDI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreMIDI.framework; path = System/Library/Frameworks/CoreMIDI.framework; sourceTree = SDKROOT; };
+		3FDC726E243CCD3C00E0E00F /* midi-state-machine.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "midi-state-machine.h"; sourceTree = "<group>"; };
+		3FDC726F243CCD3C00E0E00F /* midi-state-machine.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = "midi-state-machine.c"; sourceTree = "<group>"; };
 		3FEA97B823940D9E00CA701B /* controls-map.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "controls-map.h"; sourceTree = "<group>"; };
 		3FEC3A03238AD8AA009CBA06 /* maschine-userland-test */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = "maschine-userland-test"; sourceTree = BUILT_PRODUCTS_DIR; };
 		3FEC3A06238AD8AA009CBA06 /* main.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = main.c; sourceTree = "<group>"; };
@@ -94,6 +99,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				3FDC726D243CC22300E0E00F /* CoreMIDI.framework in Frameworks */,
 				3F2CA8C9238AD9400042DB4F /* libusb-1.0.0.dylib in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -119,6 +125,7 @@
 		3F2CA8C8238AD9400042DB4F /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
+				3FDC726C243CC22300E0E00F /* CoreMIDI.framework */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
@@ -145,6 +152,8 @@
 			isa = PBXGroup;
 			children = (
 				3FEC3A06238AD8AA009CBA06 /* main.c */,
+				3FDC726E243CCD3C00E0E00F /* midi-state-machine.h */,
+				3FDC726F243CCD3C00E0E00F /* midi-state-machine.c */,
 				3FEA97B823940D9E00CA701B /* controls-map.h */,
 			);
 			path = "maschine-userland-test";
@@ -272,6 +281,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				3FDC7270243CCD3C00E0E00F /* midi-state-machine.c in Sources */,
 				3FEC3A07238AD8AA009CBA06 /* main.c in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
