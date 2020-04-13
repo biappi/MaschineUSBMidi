@@ -9,9 +9,10 @@
 #include "midi-state-machine.h"
 #include <stdio.h>
 
-void midi_parser_init(midi_parser * parser, midi_parser_callback *callback) {
+void midi_parser_init(midi_parser * parser, midi_parser_callback *callback, void *user_data) {
     parser->state = midi_parser_wait_for_status;
     parser->send = callback;
+    parser->user_data = user_data;
 }
 
 static int next_state_for_byte(uint8_t byte, midi_parser_state *next) {
@@ -71,13 +72,13 @@ void midi_parser_parse(midi_parser * parser, uint8_t byte) {
             case midi_parser_receive_2nd_data_byte: {
                 parser->packet[2] = byte;
                 parser->state = midi_parser_receive_1st_data_byte;
-                parser->send(parser->packet, 3);
+                parser->send(parser->packet, 3, parser->user_data);
                 break;
             }
                 
             case midi_parser_receive_data_byte: {
                 parser->packet[1] = byte;
-                parser->send(parser->packet, 2);
+                parser->send(parser->packet, 2, parser->user_data);
                 break;
             }
                 
@@ -86,7 +87,7 @@ void midi_parser_parse(midi_parser * parser, uint8_t byte) {
                 parser->len++;
                 
                 if (byte == 0xf7) {
-                    parser->send(parser->packet, parser->len);
+                    parser->send(parser->packet, parser->len, parser->user_data);
                     parser->state = midi_parser_wait_for_status;
                 }
                 

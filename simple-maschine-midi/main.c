@@ -20,12 +20,47 @@
 const uint16_t USB_VID_NATIVEINSTRUMENTS  = 0x17cc;
 const uint16_t USB_PID_MASCHINECONTROLLER = 0x0808;
 
-libusb_device_handle * maschine;
-midi_parser parser;
+struct Maschine {
+    libusb_device_handle * usb_handle;
+    midi_parser parser;
+    
+    MIDIClientRef client;
+    MIDIEndpointRef source;
+    MIDIEndpointRef destination;
+};
 
-MIDIClientRef client;
-MIDIEndpointRef source;
-MIDIEndpointRef destination;
+static void midi_send(uint8_t *buf, int len, void * user_data);
+static void InputPortCallback(
+    const MIDIPacketList * pktlist,
+    void * refCon,
+    void * connRefCon
+);
+
+int Maschine_Init(struct Maschine * maschine) {
+    midi_parser_init(&maschine->parser, midi_send, maschine);
+    
+    MIDIClientCreate(
+        CFSTR("Simple Maschine MIDI Driver"),
+        NULL,
+        NULL, &maschine->client
+    );
+    
+    MIDISourceCreate(
+        maschine->client,
+        CFSTR("Simple Maschine MIDI In"),
+        &maschine->source
+    );
+    
+    MIDIDestinationCreate(
+        maschine->client,
+        CFSTR("Simple Maschine MIDI Out"),
+        InputPortCallback,
+        maschine,
+        &maschine->destination
+    );
+    
+    return 0;
+}
 
 enum EP1_COMMANDS {
     EP1_CMD_GET_DEVICE_INFO = 0x1,
@@ -123,8 +158,8 @@ static unsigned int decode_erp(uint8_t a, uint8_t b)
 }
 
 static void ep1_command_responses_callback(struct libusb_transfer * transfer) {
-    
     enum EP1_COMMANDS cmd = transfer->buffer[0];
+    struct Maschine *maschine = (struct Maschine *)transfer->user_data;
     
     switch (cmd) {
         case EP1_CMD_GET_DEVICE_INFO:
@@ -193,7 +228,7 @@ static void ep1_command_responses_callback(struct libusb_transfer * transfer) {
             int       len = transfer->buffer[2];
 
             for (int i = 0; i < len; i++) {
-                midi_parser_parse(&parser, buf[i]);
+                midi_parser_parse(&maschine->parser, buf[i]);
             }
             
             break;
@@ -221,6 +256,8 @@ static uint16_t uint16_le_to_cpu(uint16_t le) {
 }
 
 static void ep4_pad_pressure_report_transfer_callback(struct libusb_transfer * transfer) {
+    struct Maschine *maschine = (struct Maschine *)transfer->user_data;
+
     for (int i = 0; i < 16; i++)
     {
         uint16_t *pad_ptr  = (uint16_t *)(transfer->buffer + (i * 2));
@@ -239,17 +276,17 @@ static void ep4_pad_pressure_report_transfer_callback(struct libusb_transfer * t
     libusb_submit_transfer(transfer);
 }
 
-static void send_command(libusb_device_handle * maschine, uint8_t * buffer, int len) {
-    libusb_bulk_transfer(maschine, 0x01, buffer, len, NULL, 200);
+static void send_command(struct Maschine * maschine, uint8_t * buffer, int len) {
+    libusb_bulk_transfer(maschine->usb_handle, 0x01, buffer, len, NULL, 200);
 }
 
-static void send_command_get_device_info(libusb_device_handle * maschine) {
+static void send_command_get_device_info(struct Maschine * maschine) {
     uint8_t command[] = { EP1_CMD_GET_DEVICE_INFO };
     send_command(maschine, command, sizeof(command));
 }
 
 static void send_command_set_auto_message(
-    libusb_device_handle *maschine,
+    struct Maschine *maschine,
     uint8_t digital,
     uint8_t analog,
     uint8_t erp
@@ -292,7 +329,7 @@ void MaschineLedState_SetLed(MaschineLedState state, enum MaschineLeds led, int 
 }
 
 static void send_led_state(
-    libusb_device_handle * maschine,
+    struct Maschine * maschine,
     MaschineLedState state
 ) {
     send_command(maschine, &state[MASCHINE_LED_BANK0], MASCHINE_LED_CMD_SIZE);
@@ -319,7 +356,7 @@ static void send_command_dimm_leds(
 }
 */
 
-void receive_ep1_command_responses(libusb_device_handle *maschine) {
+void receive_ep1_command_responses(struct Maschine *maschine) {
     static const size_t length = 64;
     static uint8_t buffer[length] = {0};
 
@@ -330,12 +367,12 @@ void receive_ep1_command_responses(libusb_device_handle *maschine) {
 
     libusb_fill_bulk_transfer(
         transfer,
-        maschine,
+        maschine->usb_handle,
         0x81,
         buffer,
         length,
         ep1_command_responses_callback,
-        NULL,
+        maschine,
         0
     );
     
@@ -344,7 +381,7 @@ void receive_ep1_command_responses(libusb_device_handle *maschine) {
         printf("cannot submit transfer %d\n", r);
 }
 
-void receive_ep4_pad_pressure_report(libusb_device_handle *maschine) {
+void receive_ep4_pad_pressure_report(struct Maschine *maschine) {
     static const size_t length = 512;
     static uint8_t buffer[length];
 
@@ -355,12 +392,12 @@ void receive_ep4_pad_pressure_report(libusb_device_handle *maschine) {
 
     libusb_fill_bulk_transfer(
         transfer,
-        maschine,
+        maschine->usb_handle,
         0x84,
         buffer,
         length,
         ep4_pad_pressure_report_transfer_callback,
-        NULL,
+        maschine,
         0
     );
 
@@ -525,9 +562,10 @@ static void InputPortCallback(
     void * refCon,
     void * connRefCon
 ) {
+    struct Maschine *maschine = (struct Maschine *)refCon;
     uint8_t buffer[512];
     MIDIPacket * packet = (MIDIPacket *)pktlist->packet;
-
+    
     for (int i = 0; i < pktlist->numPackets; i++) {
         if (packet->length > (sizeof(buffer) - 3))
             continue;
@@ -537,12 +575,14 @@ static void InputPortCallback(
         buffer[2] = packet->length;
         memcpy(buffer + 3, packet->data, packet->length);
         
-        libusb_bulk_transfer(maschine, 0x01, buffer, packet->length + 3, NULL, 200);
+        libusb_bulk_transfer(maschine->usb_handle, 0x01, buffer, packet->length + 3, NULL, 200);
         packet = MIDIPacketNext(packet);
     }
 }
 
-static void midi_send(uint8_t *buf, int len) {
+static void midi_send(uint8_t *buf, int len, void *user_data) {
+    struct Maschine * maschine = (struct Maschine *)user_data;
+    
     static uint8_t packetData[512];
     
     MIDIPacketList *packetList = (MIDIPacketList *)packetData;
@@ -551,7 +591,7 @@ static void midi_send(uint8_t *buf, int len) {
     curPacket = MIDIPacketListInit(packetList);
     curPacket = MIDIPacketListAdd(packetList, sizeof(packetData), curPacket, 0, len, buf);
     
-    MIDIReceived(source, packetList);
+    MIDIReceived(maschine->source, packetList);
 }
 
 static void send_display_test(libusb_device_handle * maschine) {
@@ -579,29 +619,31 @@ static void led_show_init(struct led_show_state * state) {
     MaschineLedState_SetLed(state->led_state, MaschineLed_BacklightDisplay, 1);
 }
 
-static void led_show_tick(libusb_device_handle * maschine, struct led_show_state * state) {
+static void led_show_tick(struct Maschine *maschine, struct led_show_state *state) {
     int onoff = !(state->show_pads / state->num_pads);
     int pad   =   state->show_pads % state->num_pads;
     
     MaschineLedState_SetLed(state->led_state, MaschineLed_Pad_1 + pad, onoff);
     send_led_state(maschine, state->led_state);
-            
+    
     state->show_pads++;
     
     if (state->show_pads > (state->num_pads * 2))
         state->show_pads = 0;
 }
 
-static void maschine_connect(libusb_device_handle * maschine) {
+static void Maschine_connect(struct Maschine *maschine, libusb_device_handle *device_handle) {
     int r;
 
-    r = libusb_claim_interface(maschine, 0);
+    r = libusb_claim_interface(device_handle, 0);
     if (r < 0)
         printf("cannot claim if %d\n", r);
     
-    r = libusb_set_interface_alt_setting(maschine, 0, 1);
+    r = libusb_set_interface_alt_setting(device_handle, 0, 1);
     if (r < 0)
         printf("cannot set alt setting %d\n", r);
+    
+    maschine->usb_handle = device_handle;
     
     receive_ep1_command_responses(maschine);
     receive_ep4_pad_pressure_report(maschine);
@@ -616,18 +658,12 @@ static void maschine_connect(libusb_device_handle * maschine) {
     led_show_init(&led_show);
     led_show_tick(maschine, &led_show);
     
-    send_display_test(maschine);
+    send_display_test(device_handle);
 }
 
 int main(void)
 {
-    midi_parser_init(&parser, midi_send);
-    
-    MIDIClientCreate(CFSTR("Simple Maschine MIDI Driver"), NULL, NULL, &client);
-    MIDISourceCreate(client, CFSTR("Simple Maschine MIDI In"), &source);
-    MIDIDestinationCreate(client, CFSTR("Simple Maschine MIDI Out"), InputPortCallback, NULL, &destination);
-    
-    /* - */
+    struct Maschine single_maschine;
     
     int r;
 
@@ -635,13 +671,15 @@ int main(void)
     if (r < 0)
         printf("cannot init %d\n", r);
 
-    maschine = libusb_open_device_with_vid_pid(
+    Maschine_Init(&single_maschine);
+    
+    libusb_device_handle *device_handle = libusb_open_device_with_vid_pid(
         NULL,
         USB_VID_NATIVEINSTRUMENTS,
         USB_PID_MASCHINECONTROLLER
     );
     
-    maschine_connect(maschine);
+    Maschine_connect(&single_maschine, device_handle);
     
     while (1) {
 //        led_show_tick(maschine, &led_show);
