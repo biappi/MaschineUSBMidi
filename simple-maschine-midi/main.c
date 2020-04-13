@@ -274,6 +274,8 @@ const int MASCHINE_LED_BANK1     = MASCHINE_LED_CMD_SIZE * 1;
 typedef uint8_t MaschineLedState[MASCHINE_LED_CMD_SIZE * 2];
 
 void MaschineLedState_Init(MaschineLedState state) {
+    memset(state, 0, sizeof(MaschineLedState));
+    
     state[MASCHINE_LED_BANK0 + 0] = EP1_CMD_DIMM_LEDS;
     state[MASCHINE_LED_BANK0 + 1] = 0x00;
     
@@ -552,6 +554,44 @@ static void midi_send(uint8_t *buf, int len) {
     MIDIReceived(source, packetList);
 }
 
+static void send_display_test(libusb_device_handle * maschine) {
+    MaschineDisplayData display_data;
+    display_data_test(display_data);
+    
+    display_init(maschine, MaschineDisplay_Left);
+    display_init(maschine, MaschineDisplay_Right);
+    
+    display_send_frame(maschine, display_data, MaschineDisplay_Left);
+    display_send_frame(maschine, display_data, MaschineDisplay_Right);
+}
+
+struct led_show_state {
+    MaschineLedState led_state;
+    int num_pads;
+    int show_pads;
+};
+
+static void led_show_init(struct led_show_state * state) {
+    state->num_pads = 16;
+    state->show_pads = 0;
+    
+    MaschineLedState_Init(state->led_state);
+    MaschineLedState_SetLed(state->led_state, MaschineLed_BacklightDisplay, 1);
+}
+
+static void led_show_tick(libusb_device_handle * maschine, struct led_show_state * state) {
+    int onoff = !(state->show_pads / state->num_pads);
+    int pad   =   state->show_pads % state->num_pads;
+    
+    MaschineLedState_SetLed(state->led_state, MaschineLed_Pad_1 + pad, onoff);
+    send_led_state(maschine, state->led_state);
+            
+    state->show_pads++;
+    
+    if (state->show_pads > (state->num_pads * 2))
+        state->show_pads = 0;
+}
+
 int main(void)
 {
     midi_parser_init(&parser, midi_send);
@@ -590,34 +630,13 @@ int main(void)
 
     /* - */
     
-    MaschineLedState led_state;
-    MaschineLedState_Init(led_state);
-    MaschineLedState_SetLed(led_state, MaschineLed_BacklightDisplay, 1);
+    struct led_show_state led_show;
     
-    const int num_pads = 16;
-    int show_pads = 0;
-    
-    MaschineDisplayData display_data;
-    display_data_test(display_data);
-    
-    display_init(maschine, MaschineDisplay_Left);
-    display_init(maschine, MaschineDisplay_Right);
-    
-    display_send_frame(maschine, display_data, MaschineDisplay_Left);
-    display_send_frame(maschine, display_data, MaschineDisplay_Right);
+    led_show_init(&led_show);
+    send_display_test(maschine);
     
     while (1) {
-        int onoff = !(show_pads / num_pads);
-        int pad   =   show_pads % num_pads;
-        
-        MaschineLedState_SetLed(led_state, MaschineLed_Pad_1 + pad, onoff);
-        send_led_state(maschine, led_state);
-                
-        show_pads++;
-        
-        if (show_pads > (num_pads * 2))
-            show_pads = 0;
-        
+        led_show_tick(maschine, &led_show);
         millisecond_sleep(80);
     }
     
