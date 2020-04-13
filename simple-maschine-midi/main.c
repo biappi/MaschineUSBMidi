@@ -592,6 +592,33 @@ static void led_show_tick(libusb_device_handle * maschine, struct led_show_state
         state->show_pads = 0;
 }
 
+static void maschine_connect(libusb_device_handle * maschine) {
+    int r;
+
+    r = libusb_claim_interface(maschine, 0);
+    if (r < 0)
+        printf("cannot claim if %d\n", r);
+    
+    r = libusb_set_interface_alt_setting(maschine, 0, 1);
+    if (r < 0)
+        printf("cannot set alt setting %d\n", r);
+    
+    receive_ep1_command_responses(maschine);
+    receive_ep4_pad_pressure_report(maschine);
+    
+    send_command_get_device_info(maschine);
+    send_command_set_auto_message(maschine, 1, 10, 5);
+    
+    /* - */
+    
+    struct led_show_state led_show;
+    
+    led_show_init(&led_show);
+    led_show_tick(maschine, &led_show);
+    
+    send_display_test(maschine);
+}
+
 int main(void)
 {
     midi_parser_init(&parser, midi_send);
@@ -614,31 +641,12 @@ int main(void)
         USB_PID_MASCHINECONTROLLER
     );
     
-    r = libusb_claim_interface(maschine, 0);
-    if (r < 0)
-        printf("cannot claim if %d\n", r);
-    
-    r = libusb_set_interface_alt_setting(maschine, 0, 1);
-    if (r < 0)
-        printf("cannot set alt setting %d\n", r);
-    
-    receive_ep1_command_responses(maschine);
-    receive_ep4_pad_pressure_report(maschine);
-
-    send_command_get_device_info(maschine);
-    send_command_set_auto_message(maschine, 1, 10, 5);
-
-    /* - */
-    
-    struct led_show_state led_show;
-    
-    led_show_init(&led_show);
-    send_display_test(maschine);
+    maschine_connect(maschine);
     
     while (1) {
-        led_show_tick(maschine, &led_show);
-        millisecond_sleep(80);
+//        led_show_tick(maschine, &led_show);
+        millisecond_sleep(1000);
     }
-    
+
     return 0;
 }
