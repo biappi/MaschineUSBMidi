@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <string.h>
+#include <time.h>
 
 #include <libusb/libusb.h>
 #include <CoreMIDI/CoreMIDI.h>
@@ -20,47 +21,125 @@
 const uint16_t USB_VID_NATIVEINSTRUMENTS  = 0x17cc;
 const uint16_t USB_PID_MASCHINECONTROLLER = 0x0808;
 
+const size_t EP1_RESPONSE_TRANSFER_LENGTH =  64;
+const size_t EP4_RESPONSE_TRANSFER_LENGTH = 512;
+
+const size_t COMMANDS_QUEUE_SIZE          = 512;
+
+struct Buffer {
+    uint8_t *buffer;
+    int len;
+};
+
+void Buffer_CopyingBytes(struct Buffer *buffer, uint8_t *data, int len) {
+    buffer->buffer = malloc(len);
+    buffer->len = len;
+    memcpy(buffer->buffer, data, len);
+}
+
+void Buffer_Free(struct Buffer *buffer) {
+    free(buffer->buffer);
+    buffer->buffer = NULL;
+    buffer->len = 0;
+}
+
+struct BufferQueue {
+    struct Buffer commands[COMMANDS_QUEUE_SIZE];
+    
+    int pad0;
+    int first;
+    int pad1;
+    int last;
+    int pad2;
+};
+
+void BufferQueue_Init(struct BufferQueue *queue) {
+    memset(queue, 0, sizeof(struct BufferQueue));
+    queue->first = 0;
+    queue->last = 0;
+}
+
+void BufferQueue_Add(struct BufferQueue *queue, uint8_t *command, int len) {
+    int next = queue->last + 1;
+    
+    if (next >= COMMANDS_QUEUE_SIZE) {
+        next -= COMMANDS_QUEUE_SIZE;
+        
+        if (next >= queue->first) {
+            printf("command queue %p overflow\n", queue);
+            return;
+        }
+    }
+    
+    Buffer_CopyingBytes(&queue->commands[queue->last], command, len);
+    queue->last = next;
+}
+
+int BufferQueue_IsEmpty(struct BufferQueue *queue) {
+    return queue->first == queue->last;
+}
+
+struct Buffer* BufferQueue_Peek(struct BufferQueue *queue) {
+    if (BufferQueue_IsEmpty(queue)) {
+        return NULL;
+    }
+    
+    return &queue->commands[queue->first];
+}
+
+void BufferQueue_Remove(struct BufferQueue *queue) {
+    if (BufferQueue_IsEmpty(queue)) {
+        return;
+    }
+
+    Buffer_Free(&(queue->commands[queue->first]));
+
+    queue->first = queue->first + 1;
+    
+    if (queue->first >= COMMANDS_QUEUE_SIZE) {
+        queue->first = 0;
+    }
+}
+
+const int MASCHINE_LED_MAX_VAL   = 63;
+const int MASCHINE_LED_BANK_SIZE = 32;
+const int MASCHINE_LED_CMD_SIZE  = MASCHINE_LED_BANK_SIZE + 2;
+const int MASCHINE_LED_BANK0     = MASCHINE_LED_CMD_SIZE * 0;
+const int MASCHINE_LED_BANK1     = MASCHINE_LED_CMD_SIZE * 1;
+
+typedef uint8_t MaschineLedState[MASCHINE_LED_CMD_SIZE * 2];
+
+struct led_show_state {
+    MaschineLedState led_state;
+    int num_pads;
+    int show_pads;
+};
+
 struct Maschine {
-    libusb_device_handle * usb_handle;
-    midi_parser parser;
+    libusb_device_handle *usb_handle;
+    
+    struct libusb_transfer *ep1_command_transfer;
+    struct libusb_transfer *ep1_command_response_transfer;
+    struct libusb_transfer *ep4_pad_report_transfer;
+    struct libusb_transfer *ep8_display_transfer;
+    
+    uint8_t ep1_command_response_buffer[EP1_RESPONSE_TRANSFER_LENGTH];
+    uint8_t ep4_pad_report_buffer[EP4_RESPONSE_TRANSFER_LENGTH];
+    
+    struct BufferQueue command_queue;
+    int is_transfering_command;
+    
+    struct BufferQueue display_queue;
+    int is_transferring_display;
     
     MIDIClientRef client;
     MIDIEndpointRef source;
     MIDIEndpointRef destination;
+    
+    midi_parser parser;
+    struct led_show_state led_show;
+    int display_init_state;
 };
-
-static void midi_send(uint8_t *buf, int len, void * user_data);
-static void InputPortCallback(
-    const MIDIPacketList * pktlist,
-    void * refCon,
-    void * connRefCon
-);
-
-int Maschine_Init(struct Maschine * maschine) {
-    midi_parser_init(&maschine->parser, midi_send, maschine);
-    
-    MIDIClientCreate(
-        CFSTR("Simple Maschine MIDI Driver"),
-        NULL,
-        NULL, &maschine->client
-    );
-    
-    MIDISourceCreate(
-        maschine->client,
-        CFSTR("Simple Maschine MIDI In"),
-        &maschine->source
-    );
-    
-    MIDIDestinationCreate(
-        maschine->client,
-        CFSTR("Simple Maschine MIDI Out"),
-        InputPortCallback,
-        maschine,
-        &maschine->destination
-    );
-    
-    return 0;
-}
 
 enum EP1_COMMANDS {
     EP1_CMD_GET_DEVICE_INFO = 0x1,
@@ -244,7 +323,10 @@ static void ep1_command_responses_callback(struct libusb_transfer * transfer) {
             break;
     }
     
-    libusb_submit_transfer(transfer);
+    int r = libusb_submit_transfer(transfer);
+    if (r != LIBUSB_SUCCESS) {
+        printf("failed to resubmit ep1 transfer: %d\n", r);
+    }
 }
 
 static uint16_t uint16_le_to_cpu(uint16_t le) {
@@ -256,7 +338,7 @@ static uint16_t uint16_le_to_cpu(uint16_t le) {
 }
 
 static void ep4_pad_pressure_report_transfer_callback(struct libusb_transfer * transfer) {
-    struct Maschine *maschine = (struct Maschine *)transfer->user_data;
+//    struct Maschine *maschine = (struct Maschine *)transfer->user_data;
 
     for (int i = 0; i < 16; i++)
     {
@@ -273,11 +355,60 @@ static void ep4_pad_pressure_report_transfer_callback(struct libusb_transfer * t
     
 //    printf("\n");
     
-    libusb_submit_transfer(transfer);
+    int r = libusb_submit_transfer(transfer);
+    if (r != LIBUSB_SUCCESS) {
+        printf("failed to resubmit ep4 transfer: %d\n", r);
+    }
 }
 
-static void send_command(struct Maschine * maschine, uint8_t * buffer, int len) {
-    libusb_bulk_transfer(maschine->usb_handle, 0x01, buffer, len, NULL, 200);
+static void send_command_async_callback(struct libusb_transfer *transfer);
+
+static void send_command_async(struct Maschine * maschine) {
+    struct Buffer *buffer = BufferQueue_Peek(&maschine->command_queue);
+    
+    if (!buffer) {
+        maschine->is_transfering_command = 0;
+        return;
+    }
+    
+    if (maschine->ep1_command_transfer == NULL)
+        maschine->ep1_command_transfer = libusb_alloc_transfer(0);
+    
+    libusb_fill_bulk_transfer(
+        maschine->ep1_command_transfer,
+        maschine->usb_handle,
+        0x01,
+        buffer->buffer,
+        buffer->len,
+        send_command_async_callback,
+        maschine,
+        0
+    );
+    
+    int r = libusb_submit_transfer(maschine->ep1_command_transfer);
+    if (r != LIBUSB_SUCCESS) {
+        printf("failed to submit command: %d\n", r);
+        maschine->is_transfering_command = 0;
+        return;
+    }
+
+    maschine->is_transfering_command = 1;
+}
+
+static void send_command_async_callback(struct libusb_transfer *transfer) {
+    struct Maschine *maschine = (struct Maschine *)transfer->user_data;
+    
+    BufferQueue_Remove(&maschine->command_queue);
+    send_command_async(maschine);
+}
+
+
+static void send_command(struct Maschine * maschine, uint8_t *buffer, int len) {
+    BufferQueue_Add(&maschine->command_queue, buffer, len);
+    
+    if (!maschine->is_transfering_command) {
+        send_command_async(maschine);
+    }
 }
 
 static void send_command_get_device_info(struct Maschine * maschine) {
@@ -300,15 +431,6 @@ static void send_command_set_auto_message(
     
     send_command(maschine, command, sizeof(command));
 }
-
-
-const int MASCHINE_LED_MAX_VAL   = 63;
-const int MASCHINE_LED_BANK_SIZE = 32;
-const int MASCHINE_LED_CMD_SIZE  = MASCHINE_LED_BANK_SIZE + 2;
-const int MASCHINE_LED_BANK0     = MASCHINE_LED_CMD_SIZE * 0;
-const int MASCHINE_LED_BANK1     = MASCHINE_LED_CMD_SIZE * 1;
-
-typedef uint8_t MaschineLedState[MASCHINE_LED_CMD_SIZE * 2];
 
 void MaschineLedState_Init(MaschineLedState state) {
     memset(state, 0, sizeof(MaschineLedState));
@@ -357,53 +479,43 @@ static void send_command_dimm_leds(
 */
 
 void receive_ep1_command_responses(struct Maschine *maschine) {
-    static const size_t length = 64;
-    static uint8_t buffer[length] = {0};
-
-    static struct libusb_transfer * transfer = NULL;
-    
-    if (transfer == NULL)
-        transfer = libusb_alloc_transfer(0);
+    if (maschine->ep1_command_response_transfer == NULL)
+        maschine->ep1_command_response_transfer = libusb_alloc_transfer(0);
 
     libusb_fill_bulk_transfer(
-        transfer,
+        maschine->ep1_command_response_transfer,
         maschine->usb_handle,
         0x81,
-        buffer,
-        length,
+        maschine->ep1_command_response_buffer,
+        sizeof(maschine->ep1_command_response_buffer),
         ep1_command_responses_callback,
         maschine,
         0
     );
     
-    int r = libusb_submit_transfer(transfer);
+    int r = libusb_submit_transfer(maschine->ep1_command_response_transfer);
     if (r < 0)
-        printf("cannot submit transfer %d\n", r);
+        printf("cannot submit ep1 transfer %d\n", r);
 }
 
 void receive_ep4_pad_pressure_report(struct Maschine *maschine) {
-    static const size_t length = 512;
-    static uint8_t buffer[length];
-
-    static struct libusb_transfer * transfer = NULL;
-    
-    if (transfer == NULL)
-        transfer = libusb_alloc_transfer(0);
+    if (maschine->ep4_pad_report_transfer == NULL)
+        maschine->ep4_pad_report_transfer = libusb_alloc_transfer(0);
 
     libusb_fill_bulk_transfer(
-        transfer,
+        maschine->ep4_pad_report_transfer,
         maschine->usb_handle,
         0x84,
-        buffer,
-        length,
+        maschine->ep4_pad_report_buffer,
+        sizeof(maschine->ep4_pad_report_buffer),
         ep4_pad_pressure_report_transfer_callback,
         maschine,
         0
     );
 
-    int r = libusb_submit_transfer(transfer);
+    int r = libusb_submit_transfer(maschine->ep4_pad_report_transfer);
     if (r < 0)
-        printf("cannot submit transfer 3 %d\n", r);
+        printf("cannot submit ep4 transfer %d\n", r);
 }
 
 const int display_width     = 255;
@@ -419,30 +531,86 @@ enum MaschineDisplay {
     MaschineDisplay_Right = 1 << 1,
 };
 
-static void millisecond_sleep(int milli) {
-    struct timeval x = {
-        .tv_sec = 0,
-        .tv_usec = milli * 1000,
-    };
+static void send_display_async_callback(struct libusb_transfer *transfer);
+
+static void send_display_async(struct Maschine * maschine) {
+    struct Buffer *buffer = BufferQueue_Peek(&maschine->display_queue);
     
-    libusb_handle_events_timeout(NULL, &x);
+    if (!buffer) {
+        maschine->is_transferring_display = 0;
+        return;
+    }
+    
+    if (maschine->ep8_display_transfer == NULL)
+        maschine->ep8_display_transfer = libusb_alloc_transfer(0);
+    
+    libusb_fill_bulk_transfer(
+        maschine->ep8_display_transfer,
+        maschine->usb_handle,
+        0x08,
+        buffer->buffer,
+        buffer->len,
+        send_display_async_callback,
+        maschine,
+        0
+    );
+    
+    int r = libusb_submit_transfer(maschine->ep8_display_transfer);
+    if (r != LIBUSB_SUCCESS) {
+        printf("failed to submit display tranfser: %d\n", r);
+        maschine->is_transferring_display = 0;
+        return;
+    }
+    
+    maschine->is_transferring_display = 1;
 }
 
-static void display_init(libusb_device_handle *maschine, enum MaschineDisplay display) {
-    uint8_t d = display;
+static void send_display_async_callback(struct libusb_transfer *transfer) {
+    struct Maschine *maschine = (struct Maschine *)transfer->user_data;
 
+    BufferQueue_Remove(&maschine->display_queue);
+    send_display_async(maschine);
+}
+
+static void send_display(struct Maschine * maschine, uint8_t *buffer, int len) {
+    BufferQueue_Add(&maschine->display_queue, buffer, len);
+    
+    if (!maschine->is_transferring_display) {
+        send_display_async(maschine);
+    }
+}
+
+static void display_init_1(struct Maschine *maschine, enum MaschineDisplay d) {
     uint8_t init1[]  = {d, 0x00, 0x01, 0x30};
     uint8_t init2[]  = {d, 0x00, 0x04, 0xCA, 0x04, 0x0F, 0x00};
+    
+    send_display(maschine, init1,  sizeof(init1));
+    send_display(maschine, init2,  sizeof(init2));
+}
 
+static void display_init_2(struct Maschine *maschine, enum MaschineDisplay d) {
     uint8_t init3[]  = {d, 0x00, 0x02, 0xBB, 0x00};
     uint8_t init4[]  = {d, 0x00, 0x01, 0xD1};
     uint8_t init5[]  = {d, 0x00, 0x01, 0x94};
     uint8_t init6[]  = {d, 0x00, 0x03, 0x81, 0x1E, 0x02};
+    
+    send_display(maschine, init3,  sizeof(init3));
+    send_display(maschine, init4,  sizeof(init4));
+    send_display(maschine, init5,  sizeof(init5));
+    send_display(maschine, init6,  sizeof(init6));
+}
 
+static void display_init_3(struct Maschine *maschine, enum MaschineDisplay d) {
     uint8_t init7[]  = {d, 0x00, 0x02, 0x20, 0x08};
+    send_display(maschine, init7,  sizeof(init7));
+}
 
+static void display_init_4(struct Maschine *maschine, enum MaschineDisplay d) {
     uint8_t init8[]  = {d, 0x00, 0x02, 0x20, 0x0B};
+    send_display(maschine, init8,  sizeof(init8));
+}
 
+static void display_init_5(struct Maschine *maschine, enum MaschineDisplay d) {
     uint8_t init9[]  = {d, 0x00, 0x01, 0xA6};
     uint8_t init10[] = {d, 0x00, 0x01, 0x31};
     uint8_t init11[] = {d, 0x00, 0x04, 0x32, 0x00, 0x00, 0x05};
@@ -453,50 +621,35 @@ static void display_init(libusb_device_handle *maschine, enum MaschineDisplay di
     uint8_t init16[] = {d, 0x00, 0x03, 0x15, 0x00, 0x54};
     uint8_t init17[] = {d, 0x00, 0x01, 0x5C};
     uint8_t init18[] = {d, 0x00, 0x01, 0x25};
+    
+    send_display(maschine, init9,  sizeof(init9));
+    send_display(maschine, init10, sizeof(init10));
+    send_display(maschine, init11, sizeof(init11));
+    send_display(maschine, init12, sizeof(init12));
+    send_display(maschine, init13, sizeof(init13));
+    send_display(maschine, init14, sizeof(init14));
+    send_display(maschine, init15, sizeof(init15));
+    send_display(maschine, init16, sizeof(init16));
+    send_display(maschine, init17, sizeof(init17));
+    send_display(maschine, init18, sizeof(init18));
+}
 
+static void display_init_6(struct Maschine *maschine, enum MaschineDisplay d) {
     uint8_t init19[] = {d, 0x00, 0x01, 0xAF};
+    send_display(maschine, init19, sizeof(init19));
+}
 
+static void display_init_7(struct Maschine *maschine, enum MaschineDisplay d) {
     uint8_t init20[] = {d, 0x00, 0x04, 0xBC, 0x02, 0x01, 0x01};
     uint8_t init21[] = {d, 0x00, 0x01, 0xA6};
     uint8_t init22[] = {d, 0x00, 0x03, 0x81, 0x25, 0x02};
-
-    libusb_bulk_transfer(maschine, 0x08, init1,  sizeof(init1),  NULL, 200);
-    libusb_bulk_transfer(maschine, 0x08, init2,  sizeof(init2),  NULL, 200);
-    millisecond_sleep(20);
     
-    libusb_bulk_transfer(maschine, 0x08, init3,  sizeof(init3),  NULL, 200);
-    libusb_bulk_transfer(maschine, 0x08, init4,  sizeof(init4),  NULL, 200);
-    libusb_bulk_transfer(maschine, 0x08, init5,  sizeof(init5),  NULL, 200);
-    libusb_bulk_transfer(maschine, 0x08, init6,  sizeof(init6),  NULL, 200);
-    millisecond_sleep(20);
-    
-    libusb_bulk_transfer(maschine, 0x08, init7,  sizeof(init7),  NULL, 200);
-    millisecond_sleep(20);
-    
-    libusb_bulk_transfer(maschine, 0x08, init8,  sizeof(init8),  NULL, 200);
-    millisecond_sleep(20);
-    
-    libusb_bulk_transfer(maschine, 0x08, init9,  sizeof(init9),  NULL, 200);
-    libusb_bulk_transfer(maschine, 0x08, init10, sizeof(init10), NULL, 200);
-    libusb_bulk_transfer(maschine, 0x08, init11, sizeof(init11), NULL, 200);
-    libusb_bulk_transfer(maschine, 0x08, init12, sizeof(init12), NULL, 200);
-    libusb_bulk_transfer(maschine, 0x08, init13, sizeof(init13), NULL, 200);
-    libusb_bulk_transfer(maschine, 0x08, init14, sizeof(init14), NULL, 200);
-    libusb_bulk_transfer(maschine, 0x08, init15, sizeof(init15), NULL, 200);
-    libusb_bulk_transfer(maschine, 0x08, init16, sizeof(init16), NULL, 200);
-    libusb_bulk_transfer(maschine, 0x08, init17, sizeof(init17), NULL, 200);
-    libusb_bulk_transfer(maschine, 0x08, init18, sizeof(init18), NULL, 200);
-    millisecond_sleep(20);
-    
-    libusb_bulk_transfer(maschine, 0x08, init19, sizeof(init19), NULL, 200);
-    millisecond_sleep(20);
-    
-    libusb_bulk_transfer(maschine, 0x08, init20, sizeof(init20), NULL, 200);
-    libusb_bulk_transfer(maschine, 0x08, init21, sizeof(init21), NULL, 200);
-    libusb_bulk_transfer(maschine, 0x08, init22, sizeof(init22), NULL, 200);
+    send_display(maschine, init20, sizeof(init20));
+    send_display(maschine, init21, sizeof(init21));
+    send_display(maschine, init22, sizeof(init22));
 }
 
-static void display_send_frame(libusb_device_handle *maschine, MaschineDisplayData data, enum MaschineDisplay display) {
+static void display_send_frame(struct Maschine *maschine, MaschineDisplayData data, enum MaschineDisplay display) {
     const int num_chunks     = 22;
     const int data_size      = 502;
     const int last_data_size = 338;
@@ -517,20 +670,19 @@ static void display_send_frame(libusb_device_handle *maschine, MaschineDisplayDa
     memcpy(mid_chunk,   mid_chunks_hdr,  sizeof(mid_chunks_hdr));
     memcpy(last_chunk,  last_chunk_hdr,  sizeof(last_chunk_hdr));
     
-    libusb_bulk_transfer(maschine, 0x08, buffer1, sizeof(buffer1), NULL, 200);
-    libusb_bulk_transfer(maschine, 0x08, buffer2, sizeof(buffer2), NULL, 200);
+    send_display(maschine, buffer1, sizeof(buffer1));
+    send_display(maschine, buffer2, sizeof(buffer2));
 
     memcpy(first_chunk + sizeof(first_chunk_hdr), data, data_size);
-    libusb_bulk_transfer(maschine, 0x08, first_chunk, sizeof(first_chunk), NULL, 200);
+    send_display(maschine, first_chunk, sizeof(first_chunk));
     
     for (int c = 1; c < (num_chunks - 1); c++) {
         memcpy(mid_chunk + sizeof(mid_chunks_hdr), data + (c * data_size), data_size);
-        libusb_bulk_transfer(maschine, 0x08, mid_chunk, sizeof(mid_chunk), NULL, 200);
+        send_display(maschine, mid_chunk, sizeof(mid_chunk));
     }
     
     memcpy(last_chunk + sizeof(last_chunk_hdr), data + ((num_chunks - 1) * data_size), last_data_size);
-    
-    libusb_bulk_transfer(maschine, 0x08, last_chunk, sizeof(last_chunk), NULL, 200);
+    send_display(maschine, last_chunk, sizeof(last_chunk));
 }
 
 static void display_data_test(MaschineDisplayData display_data) {
@@ -556,6 +708,45 @@ static void display_data_test(MaschineDisplayData display_data) {
         xx = (xx + 1) & 0x1f;
     }
 }
+
+static void display_send_test_pattern(struct Maschine *maschine, enum MaschineDisplay d) {
+    MaschineDisplayData display_data;
+    display_data_test(display_data);
+    
+    display_send_frame(maschine, display_data, MaschineDisplay_Left);
+    display_send_frame(maschine, display_data, MaschineDisplay_Right);
+}
+
+static void display_init_tick(struct Maschine *maschine) {
+    /* here we assume that one "tick" (1/30th of a sec) is enough
+     * to transfer a single init step
+     */
+    
+    typedef void (*init_step)(struct Maschine *, enum MaschineDisplay);
+    
+    static init_step steps[] = {
+        display_init_1,
+        display_init_2,
+        display_init_3,
+        display_init_4,
+        display_init_5,
+        display_init_6,
+        display_init_7,
+        display_send_test_pattern,
+    };
+    
+    static const int steps_count = sizeof(steps) / sizeof(init_step);
+    
+    if (maschine->display_init_state >= steps_count) {
+        return;
+    }
+    
+    steps[maschine->display_init_state](maschine, MaschineDisplay_Left);
+    steps[maschine->display_init_state](maschine, MaschineDisplay_Right);
+    maschine->display_init_state++;
+}
+
+/* - */
 
 static void InputPortCallback(
     const MIDIPacketList * pktlist,
@@ -594,7 +785,8 @@ static void midi_send(uint8_t *buf, int len, void *user_data) {
     MIDIReceived(maschine->source, packetList);
 }
 
-static void send_display_test(libusb_device_handle * maschine) {
+/*
+static void send_display_test(struct Maschine * maschine) {
     MaschineDisplayData display_data;
     display_data_test(display_data);
     
@@ -604,12 +796,7 @@ static void send_display_test(libusb_device_handle * maschine) {
     display_send_frame(maschine, display_data, MaschineDisplay_Left);
     display_send_frame(maschine, display_data, MaschineDisplay_Right);
 }
-
-struct led_show_state {
-    MaschineLedState led_state;
-    int num_pads;
-    int show_pads;
-};
+*/
 
 static void led_show_init(struct led_show_state * state) {
     state->num_pads = 16;
@@ -619,7 +806,9 @@ static void led_show_init(struct led_show_state * state) {
     MaschineLedState_SetLed(state->led_state, MaschineLed_BacklightDisplay, 1);
 }
 
-static void led_show_tick(struct Maschine *maschine, struct led_show_state *state) {
+static void led_show_tick(struct Maschine *maschine) {
+    struct led_show_state *state = &maschine->led_show;
+    
     int onoff = !(state->show_pads / state->num_pads);
     int pad   =   state->show_pads % state->num_pads;
     
@@ -632,18 +821,71 @@ static void led_show_tick(struct Maschine *maschine, struct led_show_state *stat
         state->show_pads = 0;
 }
 
-static void Maschine_connect(struct Maschine *maschine, libusb_device_handle *device_handle) {
+int Maschine_Init(
+    struct Maschine * maschine,
+    libusb_device_handle *device_handle
+) {
     int r;
+    OSStatus s;
+
+    memset(maschine, 0, sizeof(struct Maschine));
+    
+    midi_parser_init(&maschine->parser, midi_send, maschine);
+    
+    s = MIDIClientCreate(
+        CFSTR("Simple Maschine MIDI Driver"),
+        NULL,
+        NULL,
+        &maschine->client
+    );
+    
+    if (s != noErr) {
+        printf("cannot create midi client: %d\n", s);
+//        return -1;
+    }
+    
+    s = MIDISourceCreate(
+        maschine->client,
+        CFSTR("Simple Maschine MIDI In"),
+        &maschine->source
+    );
+    
+    if (s != noErr) {
+        printf("cannot create source endpoint: %d\n", s);
+//        return -1;
+    }
+
+    s = MIDIDestinationCreate(
+        maschine->client,
+        CFSTR("Simple Maschine MIDI Out"),
+        InputPortCallback,
+        maschine,
+        &maschine->destination
+    );
+
+    if (s != noErr) {
+        printf("cannot create destination endpoint: %d\n", s);
+//        return -1;
+    }
+
+    /* - */
 
     r = libusb_claim_interface(device_handle, 0);
-    if (r < 0)
-        printf("cannot claim if %d\n", r);
+    if (r != LIBUSB_SUCCESS) {
+        printf("cannot claim interface %d\n", r);
+        return -1;
+    }
     
     r = libusb_set_interface_alt_setting(device_handle, 0, 1);
-    if (r < 0)
-        printf("cannot set alt setting %d\n", r);
-    
+    if (r != LIBUSB_SUCCESS) {
+        printf("cannot set alternate interface %d\n", r);
+        return -1;
+    }
+
     maschine->usb_handle = device_handle;
+    
+    BufferQueue_Init(&maschine->command_queue);
+    BufferQueue_Init(&maschine->display_queue);
     
     receive_ep1_command_responses(maschine);
     receive_ep4_pad_pressure_report(maschine);
@@ -652,38 +894,151 @@ static void Maschine_connect(struct Maschine *maschine, libusb_device_handle *de
     send_command_set_auto_message(maschine, 1, 10, 5);
     
     /* - */
+        
+    led_show_init(&maschine->led_show);
+
+    return 0;
+}
+
+static void Maschine_disconnect(struct Maschine * maschine) {
+    OSStatus s;
     
-    struct led_show_state led_show;
+    s = MIDIEndpointDispose(maschine->source);
+    if (s != noErr) {
+        printf("cannot dispose source %d\n", s);
+    }
     
-    led_show_init(&led_show);
-    led_show_tick(maschine, &led_show);
+    MIDIEndpointDispose(maschine->destination);
+    if (s != noErr) {
+        printf("cannot dispose destination %d\n", s);
+    }
+
+    MIDIClientDispose(maschine->client);
+    if (s != noErr) {
+        printf("cannot dispose client %d\n", s);
+    }
+
+    libusb_cancel_transfer(maschine->ep1_command_response_transfer);
+    libusb_cancel_transfer(maschine->ep4_pad_report_transfer);
+    libusb_cancel_transfer(maschine->ep1_command_transfer);
     
-    send_display_test(device_handle);
+    libusb_close(maschine->usb_handle);
+}
+
+static void Maschine_Tick(struct Maschine * maschine) {
+    display_init_tick(maschine);
+    led_show_tick(maschine);
+}
+
+/* - */
+
+static struct Maschine single_maschine;
+static int maschine_connected = 0;
+
+static int hotplug_callback(
+    struct libusb_context *ctx,
+    struct libusb_device *dev,
+    libusb_hotplug_event event,
+    void *user_data
+) {
+    int rc;
+    
+    /*{
+        struct libusb_device_descriptor desc;
+        libusb_get_device_descriptor(dev, &desc);
+    }*/
+    
+    switch (event) {
+        case LIBUSB_HOTPLUG_EVENT_DEVICE_ARRIVED:
+            printf("LIBUSB_HOTPLUG_EVENT_DEVICE_ARRIVED: ctx: %p dev: %p\n", ctx, dev);
+            
+            if (maschine_connected) {
+                printf("not attaching to device because already connected to one\n");
+                break;
+            }
+            
+            libusb_device_handle *handle;
+            rc = libusb_open(dev, &handle);
+            
+            if (LIBUSB_SUCCESS != rc) {
+                printf("Could not open USB device\n");
+                break;
+            }
+            
+            rc = Maschine_Init(&single_maschine, handle);
+            if (rc != 0) {
+                printf("cannot connect to the maschine\n");
+                break;
+            }
+            
+            maschine_connected = 1;
+            
+            break;
+            
+        case LIBUSB_HOTPLUG_EVENT_DEVICE_LEFT:
+            printf("LIBUSB_HOTPLUG_EVENT_DEVICE_LEFT: ctx: %p dev: %p\n", ctx, dev);
+            
+            if (!maschine_connected) {
+                printf("not detaching a device because we are not connected\n");
+                break;
+            }
+            
+            libusb_device * maschine_device = libusb_get_device(single_maschine.usb_handle);
+            
+            if (maschine_device != dev) {
+                printf("not detaching a device because it's not the one we're attached to\n");
+                break;
+            }
+            
+            Maschine_disconnect(&single_maschine);
+            maschine_connected = 0;
+            
+            break;
+            
+        default:
+            printf("Unhandled event %d\n", event);
+            break;
+    }
+    
+    return 0;
 }
 
 int main(void)
 {
-    struct Maschine single_maschine;
-    
+    libusb_hotplug_callback_handle callback_handle;
+
     int r;
 
     r = libusb_init(NULL);
     if (r < 0)
         printf("cannot init %d\n", r);
 
-    Maschine_Init(&single_maschine);
-    
-    libusb_device_handle *device_handle = libusb_open_device_with_vid_pid(
+    r = libusb_hotplug_register_callback(
         NULL,
+        LIBUSB_HOTPLUG_EVENT_DEVICE_ARRIVED | LIBUSB_HOTPLUG_EVENT_DEVICE_LEFT,
+        LIBUSB_HOTPLUG_ENUMERATE,
         USB_VID_NATIVEINSTRUMENTS,
-        USB_PID_MASCHINECONTROLLER
+        USB_PID_MASCHINECONTROLLER,
+        LIBUSB_HOTPLUG_MATCH_ANY,
+        hotplug_callback,
+        NULL,
+        &callback_handle
     );
     
-    Maschine_connect(&single_maschine, device_handle);
+    if (r != LIBUSB_SUCCESS) {
+      printf("Error creating a hotplug callback\n");
+      libusb_exit(NULL);
+      return EXIT_FAILURE;
+    }
+    
     
     while (1) {
-//        led_show_tick(maschine, &led_show);
-        millisecond_sleep(1000);
+        if (maschine_connected) {
+            Maschine_Tick(&single_maschine);
+        }
+
+        libusb_handle_events(NULL);
+        usleep(1.0 / 80.0 * 1000000.0);
     }
 
     return 0;

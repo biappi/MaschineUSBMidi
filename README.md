@@ -17,6 +17,6 @@ able to see a new MIDI port in other MIDI applications.
 Known Issues
 ------------
 
-This application does not support USB hotplugging, and it is not tested
-with more than one Maschine connected to the computer.
+This application is not tested with more than one Maschine connected
+to the computer.
 
